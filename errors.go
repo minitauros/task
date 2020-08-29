@@ -41,3 +41,13 @@ func (e *MaximumTaskCallExceededError) Error() string {
 		e.task,
 	)
 }
+
+// DepCycleError is used when for example A depends on B depends on A.
+type DepCycleError struct {
+	task1 string
+	task2 string
+}
+
+func (e DepCycleError) Error() string {
+	return fmt.Sprintf("cyclic dependency detected: task %s depends on %s, which depends on %s", e.task1, e.task2, e.task1)
+}

@@ -128,7 +128,7 @@ func (e *Executor) registerWatchedFiles(w *watcher.Watcher, calls ...taskfile.Ca
 		}
 
 		for _, d := range task.Deps {
-			if err := registerTaskFiles(taskfile.Call{Task: d.Task, Vars: d.Vars}); err != nil {
+			if err := registerTaskFiles(d.ToCall()); err != nil {
 				return err
 			}
 		}

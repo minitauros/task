@@ -79,3 +79,8 @@ func (d *Dep) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	return ErrCantUnmarshalDep
 }
+
+// ToCall converts the dependency to a call.
+func (d *Dep) ToCall() Call {
+	return Call{Task: d.Task, Vars: d.Vars}
+}

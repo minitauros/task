@@ -523,7 +523,7 @@ func TestCyclicDep(t *testing.T) {
 		Stderr: ioutil.Discard,
 	}
 	assert.NoError(t, e.Setup())
-	assert.IsType(t, &task.MaximumTaskCallExceededError{}, e.Run(context.Background(), taskfile.Call{Task: "task-1"}))
+	assert.IsType(t, task.DepCycleError{}, e.Run(context.Background(), taskfile.Call{Task: "task-1"}))
 }
 
 func TestTaskVersion(t *testing.T) {
