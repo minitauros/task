@@ -523,7 +523,34 @@ func TestCyclicDep(t *testing.T) {
 		Stderr: ioutil.Discard,
 	}
 	assert.NoError(t, e.Setup())
-	assert.IsType(t, task.DepCycleError{}, e.Run(context.Background(), taskfile.Call{Task: "task-1"}))
+	assert.IsType(t, task.MaxDepLevelReachedError{}, e.Run(context.Background(), taskfile.Call{Task: "a"}))
+}
+
+func TestCyclicDirectDep(t *testing.T) {
+	const dir = "testdata/cyclic_direct"
+
+	e := task.Executor{
+		Dir:    dir,
+		Stdout: ioutil.Discard,
+		Stderr: ioutil.Discard,
+	}
+	assert.NoError(t, e.Setup())
+	assert.IsType(t, task.DirectDepCycleError{}, e.Run(context.Background(), taskfile.Call{Task: "task-1"}))
+}
+
+func TestDepsRunOnlyOnce(t *testing.T) {
+	tt := fileContentTest{
+		Dir:       "testdata/deps_run_only_once",
+		Target:    "a",
+		TrimSpace: true,
+		Files: map[string]string{
+			"a.txt": "a",
+			"b.txt": "b",
+			"c.txt": "c",
+			"d.txt": "d",
+		},
+	}
+	tt.Run(t)
 }
 
 func TestTaskVersion(t *testing.T) {

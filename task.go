@@ -27,6 +27,11 @@ const (
 	// MaximumTaskCall is the max number of times a task can be called.
 	// This exists to prevent infinite loops on cyclic dependencies
 	MaximumTaskCall = 100
+
+	// MaximumDepLevel defines the maximum depth of the dependency analysis.
+	// The depth is 2 if a (0) depends on b (1) depends on c (2).
+	// We use this to prevent the dependency analysis to end up in an infinite loop.
+	MaximumDepLevel = 50
 )
 
 // Executor executes a Taskfile
@@ -346,6 +351,10 @@ func (e *Executor) recursivelyCollectDeps(
 	level int,
 	collection map[int][]*taskfile.Dep,
 ) error {
+	if level == MaximumDepLevel {
+		return MaxDepLevelReachedError{level}
+	}
+
 	collection[level] = append(collection[level], t.Deps...)
 
 	for _, d := range t.Deps {
@@ -361,7 +370,7 @@ func (e *Executor) recursivelyCollectDeps(
 		// we have a dependency cycle.
 		for _, depDep := range depTask.Deps {
 			if depDep.Task == t.Task {
-				return DepCycleError{depDep.Task, d.Task}
+				return DirectDepCycleError{depDep.Task, d.Task}
 			}
 		}
 

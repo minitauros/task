@@ -42,12 +42,23 @@ func (e *MaximumTaskCallExceededError) Error() string {
 	)
 }
 
-// DepCycleError is used when for example A depends on B depends on A.
-type DepCycleError struct {
+// MaxDepLevelReachedError is used when while analyzing dependencies, we pass the maximum level of depth.
+type MaxDepLevelReachedError struct {
+	level int
+}
+
+func (e MaxDepLevelReachedError) Error() string {
+	return fmt.Sprintf("maximum dependency level (%d) exceeded", e.level)
+}
+
+// DirectDepCycleError is used when for example A depends on B depends on A.
+// Indirect would be when A depends on B depends on C depends on A.
+// We use MaxDepLevelReachedError in that case.
+type DirectDepCycleError struct {
 	task1 string
 	task2 string
 }
 
-func (e DepCycleError) Error() string {
+func (e DirectDepCycleError) Error() string {
 	return fmt.Sprintf("cyclic dependency detected: task %s depends on %s, which depends on %s", e.task1, e.task2, e.task1)
 }
