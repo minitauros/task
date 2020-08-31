@@ -299,7 +299,7 @@ func (e *Executor) runTask(ctx context.Context, call taskfile.Call, runDeps bool
 	}
 
 	for i := range t.Cmds {
-		if err := e.runCommand(ctx, t, call, i); err != nil {
+		if err := e.runCommand(ctx, t, i); err != nil {
 			if err2 := e.statusOnError(t); err2 != nil {
 				e.Logger.VerboseErrf(logger.Yellow, "task: error cleaning status on error: %v", err2)
 			}
@@ -313,12 +313,6 @@ func (e *Executor) runTask(ctx context.Context, call taskfile.Call, runDeps bool
 		}
 	}
 	return nil
-}
-
-func (e *Executor) runDep(ctx context.Context, d *taskfile.Dep) error {
-	e.depMutexMap[d.Task].Lock()
-	defer e.depMutexMap[d.Task].Unlock()
-	return e.runTask(ctx, d.ToCall(), false)
 }
 
 // collectDeps collects the dependencies of the given task.
@@ -344,6 +338,13 @@ func (e *Executor) collectDeps(t *taskfile.Task) (map[int][]*taskfile.Dep, error
 		return nil, err
 	}
 	return collection, err
+}
+
+func (e *Executor) hasDep(call taskfile.Call, dep string) (bool, error) {
+	t, err := e.CompiledTask(call)
+	if err != nil {
+		return false, err
+	}
 }
 
 func (e *Executor) recursivelyCollectDeps(
@@ -427,6 +428,20 @@ func (e *Executor) runDeps(ctx context.Context, t *taskfile.Task) error {
 			}
 
 			g.Go(func() error {
+				e.depMutexMap[d.Task].Lock()
+				defer e.depMutexMap[d.Task].Unlock()
+
+				// This dep itself may not depend on the task that initiated it.
+				depCall := d.ToCall()
+				hasDep, err := e.hasDep(depCall, t.Task)
+				if err != nil {
+				    return err
+				} else if hasDep {
+					return errors.New("bla")
+				}
+
+				return e.runTask(ctx, depCall, false)
+
 				return e.runDep(ctx, d)
 			})
 
@@ -442,12 +457,18 @@ func (e *Executor) runDeps(ctx context.Context, t *taskfile.Task) error {
 	return nil
 }
 
-func (e *Executor) runCommand(ctx context.Context, t *taskfile.Task, call taskfile.Call, i int) error {
+func (e *Executor) runDep(ctx context.Context, d *taskfile.Dep) error {
+	e.depMutexMap[d.Task].Lock()
+	defer e.depMutexMap[d.Task].Unlock()
+	return e.runTask(ctx, d.ToCall(), false)
+}
+
+func (e *Executor) 	runCommand(ctx context.Context, t *taskfile.Task, i int) error {
 	cmd := t.Cmds[i]
 
 	switch {
 	case cmd.Task != "":
-		err := e.RunTask(ctx, taskfile.Call{Task: cmd.Task, Vars: cmd.Vars})
+		err := e.RunTask(ctx, cmd.ToCall())
 		if err != nil {
 			return err
 		}

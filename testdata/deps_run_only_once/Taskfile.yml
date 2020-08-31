@@ -1,6 +1,14 @@
 version: '3'
 
 tasks:
+  # 0:b,c
+  # 1:c,d,d
+  # 2:d
+  # d >> c >> b
+  # FIX: If b, which runs a, is a dependency (direct or indirect) of a, return err
+  # When running b, when running a, check if a has no dep b.
+  # If d runs b, while b depends on d, then problem.
+  # When running d, when running dep b, check if b does not have dep a.
   a:
     cmds:
       - echo "a" >> a.txt
@@ -23,4 +31,5 @@ tasks:
 
   d:
     cmds:
+      - task: b
       - echo "d" >> d.txt
