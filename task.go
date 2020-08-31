@@ -60,6 +60,7 @@ type Executor struct {
 
 	taskvars *taskfile.Vars
 
+	callStackMux  *sync.Mutex
 	taskCallCount map[string]*int32
 	mkdirMutexMap map[string]*sync.Mutex
 	depMutexMap   map[string]*sync.Mutex
@@ -243,6 +244,7 @@ func (e *Executor) Setup() error {
 		}
 	}
 
+	e.callStackMux = &sync.Mutex{}
 	e.taskCallCount = make(map[string]*int32, len(e.Taskfile.Tasks))
 	e.mkdirMutexMap = make(map[string]*sync.Mutex, len(e.Taskfile.Tasks))
 	e.depMutexMap = make(map[string]*sync.Mutex, len(e.Taskfile.Tasks))
@@ -256,11 +258,32 @@ func (e *Executor) Setup() error {
 
 // RunTask runs a task by its name
 func (e *Executor) RunTask(ctx context.Context, call taskfile.Call) error {
-	return e.runTask(ctx, call, true)
+	return e.runTask(ctx, make([]taskfile.Call, 0, 24), call, true)
+}
+
+// containsCall returns how often the given needle call occurs in the given stack of calls.
+func containsCall(stack []taskfile.Call, needle taskfile.Call) bool {
+	for _, call := range stack {
+		if call.Task == needle.Task && reflect.DeepEqual(call.Vars, needle.Vars) {
+			return true
+		}
+	}
+	return false
+}
+
+// addCall adds the given call to the given call stack.
+// It returns a new call stack to ensure that the original one is not modified.
+func addCall(stack []taskfile.Call, call taskfile.Call) []taskfile.Call {
+	cpy := make([]taskfile.Call, 0, len(stack))
+	cpy = append(cpy, stack...)
+	cpy = append(cpy, call)
+	return cpy
 }
 
 // runTask runs a task by its name
-func (e *Executor) runTask(ctx context.Context, call taskfile.Call, runDeps bool) error {
+func (e *Executor) runTask(ctx context.Context, callStack []taskfile.Call, call taskfile.Call, runDeps bool) error {
+	callStack = addCall(callStack, call)
+
 	t, err := e.CompiledTask(call)
 	if err != nil {
 		return err
@@ -270,7 +293,7 @@ func (e *Executor) runTask(ctx context.Context, call taskfile.Call, runDeps bool
 	}
 
 	if runDeps {
-		if err := e.runDeps(ctx, t); err != nil {
+		if err := e.runDeps(ctx, callStack, t); err != nil {
 			return err
 		}
 	}
@@ -299,7 +322,7 @@ func (e *Executor) runTask(ctx context.Context, call taskfile.Call, runDeps bool
 	}
 
 	for i := range t.Cmds {
-		if err := e.runCommand(ctx, t, i); err != nil {
+		if err := e.runCommand(ctx, callStack, t, i); err != nil {
 			if err2 := e.statusOnError(t); err2 != nil {
 				e.Logger.VerboseErrf(logger.Yellow, "task: error cleaning status on error: %v", err2)
 			}
@@ -340,13 +363,6 @@ func (e *Executor) collectDeps(t *taskfile.Task) (map[int][]*taskfile.Dep, error
 	return collection, err
 }
 
-func (e *Executor) hasDep(call taskfile.Call, dep string) (bool, error) {
-	t, err := e.CompiledTask(call)
-	if err != nil {
-		return false, err
-	}
-}
-
 func (e *Executor) recursivelyCollectDeps(
 	t *taskfile.Task,
 	level int,
@@ -384,6 +400,67 @@ func (e *Executor) recursivelyCollectDeps(
 	return nil
 }
 
+func (e *Executor) runDeps(ctx context.Context, callStack []taskfile.Call, t *taskfile.Task) error {
+	deps, err := e.collectDeps(t)
+	if err != nil {
+		return err
+	}
+
+	// Keep track of which deps we've run so that we can prevent a dep
+	// from being run again if it has already ran on a deeper level.
+	ranDeps := make([]*taskfile.Dep, 0, len(deps))
+
+	// Start at the deepest level and run all deps there,
+	// then move up levels until all deps have been run.
+	for level := len(deps) - 1; level >= 0; level-- {
+		g, ctx := errgroup.WithContext(ctx)
+
+	depLoop:
+		for _, d := range deps[level] {
+			d := d
+
+			// If this dep was already run, don't run it again.
+			for _, ranDep := range ranDeps {
+				if d.Task == ranDep.Task && reflect.DeepEqual(d.Vars, ranDep.Vars) {
+					continue depLoop
+				}
+			}
+
+			// if countCalls(callStack, d.ToCall()) > 0 {
+			// 	fmt.Printf("already ran dependency %s, not running again for task %s\n", d.Task, t.Task)
+			// 	continue
+			// }
+
+			g.Go(func() error {
+				return e.runDep(ctx, callStack, d)
+			})
+
+			ranDeps = append(ranDeps, d)
+		}
+
+		err := g.Wait()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (e *Executor) runDep(ctx context.Context, callStack []taskfile.Call, d *taskfile.Dep) error {
+	fmt.Println("")
+	fmt.Printf("runDep(%s)\n", d.Task)
+	defer fmt.Println("")
+	fmt.Printf("running dep %s, waiting for lock\n", d.Task)
+	if containsCall(callStack, d.ToCall()) {
+		return InfiniteCallLoopError{causeTask: d.Task}
+	}
+	e.depMutexMap[d.Task].Lock()
+	defer e.depMutexMap[d.Task].Unlock()
+	fmt.Printf("got lock")
+	return e.runTask(ctx, callStack, d.ToCall(), false)
+}
+
 func (e *Executor) mkdir(t *taskfile.Task) error {
 	if t.Dir == "" {
 		return nil
@@ -401,74 +478,12 @@ func (e *Executor) mkdir(t *taskfile.Task) error {
 	return nil
 }
 
-func (e *Executor) runDeps(ctx context.Context, t *taskfile.Task) error {
-	deps, err := e.collectDeps(t)
-	if err != nil {
-		return err
-	}
-
-	// Keep track of which deps we've run so that we can prevent a dep
-	// from being run again if it has already ran on a deeper level.
-	ranDeps := make([]*taskfile.Dep, 0, len(deps))
-
-	// Start at the deepest level and run all deps there,
-	// then move up levels until all deps have been run.
-	for level := len(deps) - 1; level >= 0; level-- {
-		g, ctx := errgroup.WithContext(ctx)
-
-	depsLoop:
-		for _, d := range deps[level] {
-			d := d
-
-			// If this dep was already run, don't run it again.
-			for _, ranDep := range ranDeps {
-				if d.Task == ranDep.Task && reflect.DeepEqual(d.Vars, ranDep.Vars) {
-					continue depsLoop
-				}
-			}
-
-			g.Go(func() error {
-				e.depMutexMap[d.Task].Lock()
-				defer e.depMutexMap[d.Task].Unlock()
-
-				// This dep itself may not depend on the task that initiated it.
-				depCall := d.ToCall()
-				hasDep, err := e.hasDep(depCall, t.Task)
-				if err != nil {
-				    return err
-				} else if hasDep {
-					return errors.New("bla")
-				}
-
-				return e.runTask(ctx, depCall, false)
-
-				return e.runDep(ctx, d)
-			})
-
-			ranDeps = append(ranDeps, d)
-		}
-
-		err := g.Wait()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (e *Executor) runDep(ctx context.Context, d *taskfile.Dep) error {
-	e.depMutexMap[d.Task].Lock()
-	defer e.depMutexMap[d.Task].Unlock()
-	return e.runTask(ctx, d.ToCall(), false)
-}
-
-func (e *Executor) 	runCommand(ctx context.Context, t *taskfile.Task, i int) error {
+func (e *Executor) runCommand(ctx context.Context, callStack []taskfile.Call, t *taskfile.Task, i int) error {
 	cmd := t.Cmds[i]
 
 	switch {
 	case cmd.Task != "":
-		err := e.RunTask(ctx, cmd.ToCall())
+		err := e.runTask(ctx, callStack, cmd.ToCall(), true)
 		if err != nil {
 			return err
 		}

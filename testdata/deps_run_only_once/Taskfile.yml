@@ -31,5 +31,5 @@ tasks:
 
   d:
     cmds:
-      - task: b
+#      - task: b
       - echo "d" >> d.txt

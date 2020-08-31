@@ -42,6 +42,20 @@ func (e *MaximumTaskCallExceededError) Error() string {
 	)
 }
 
+// InfiniteCallLoopError is used when we detect that a task call is going into an infinite loop.
+// Example:
+// If a given call is already part of a given call stack, we are in trouble.
+// E.g. if from a we call b, then b calls c, and c calls b, (call stack "a,b,c,b")
+// then we know we are in trouble, because b was already called and will call c again.
+type InfiniteCallLoopError struct {
+	// Name of the task that is causing the infinite loop.
+	causeTask string
+}
+
+func (e InfiniteCallLoopError) Error() string {
+	return fmt.Sprintf("task %s already ran; assuming infinite loop", e.causeTask)
+}
+
 // MaxDepLevelReachedError is used when while analyzing dependencies, we pass the maximum level of depth.
 type MaxDepLevelReachedError struct {
 	level int
