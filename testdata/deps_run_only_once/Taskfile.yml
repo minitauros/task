@@ -3,7 +3,6 @@ version: '3'
 tasks:
   a:
     cmds:
-      - rm -f a.txt
       - echo "a" >> a.txt
     deps:
       - b
@@ -11,7 +10,6 @@ tasks:
 
   b:
     cmds:
-      - rm -f b.txt
       - echo "b" >> b.txt
     deps:
       - c
@@ -19,12 +17,10 @@ tasks:
 
   c:
     cmds:
-      - rm -f c.txt
       - echo "c" >> c.txt
     deps:
       - d
 
   d:
     cmds:
-      - rm -f d.txt
       - echo "d" >> d.txt

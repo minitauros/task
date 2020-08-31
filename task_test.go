@@ -539,16 +539,24 @@ func TestCyclicDirectDep(t *testing.T) {
 }
 
 func TestDepsRunOnlyOnce(t *testing.T) {
+	dir := "testdata/deps_run_only_once"
+
+	files := map[string]string{
+		"a.txt": "a",
+		"b.txt": "b",
+		"c.txt": "c",
+		"d.txt": "d",
+	}
+	for fileName := range files {
+		file := filepath.Join(dir, fileName)
+		_ = os.Remove(file)
+	}
+
 	tt := fileContentTest{
-		Dir:       "testdata/deps_run_only_once",
+		Dir:       dir,
 		Target:    "a",
 		TrimSpace: true,
-		Files: map[string]string{
-			"a.txt": "a",
-			"b.txt": "b",
-			"c.txt": "c",
-			"d.txt": "d",
-		},
+		Files:     files,
 	}
 	tt.Run(t)
 }
