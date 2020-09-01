@@ -258,31 +258,16 @@ func (e *Executor) Setup() error {
 
 // RunTask runs a task by its name
 func (e *Executor) RunTask(ctx context.Context, call taskfile.Call) error {
-	return e.runTask(ctx, make([]taskfile.Call, 0, 24), call, true)
-}
-
-// containsCall returns how often the given needle call occurs in the given stack of calls.
-func containsCall(stack []taskfile.Call, needle taskfile.Call) bool {
-	for _, call := range stack {
-		if call.Task == needle.Task && reflect.DeepEqual(call.Vars, needle.Vars) {
-			return true
-		}
-	}
-	return false
-}
-
-// addCall adds the given call to the given call stack.
-// It returns a new call stack to ensure that the original one is not modified.
-func addCall(stack []taskfile.Call, call taskfile.Call) []taskfile.Call {
-	cpy := make([]taskfile.Call, 0, len(stack))
-	cpy = append(cpy, stack...)
-	cpy = append(cpy, call)
-	return cpy
+	return e.runTask(ctx, make(taskfile.CallStack, 0, 16), call, true)
 }
 
 // runTask runs a task by its name
-func (e *Executor) runTask(ctx context.Context, callStack []taskfile.Call, call taskfile.Call, runDeps bool) error {
-	callStack = addCall(callStack, call)
+func (e *Executor) runTask(ctx context.Context, callStack taskfile.CallStack, call taskfile.Call, runDeps bool) error {
+	if callStack.Contains(call) {
+		return InfiniteCallLoopError{causeTask: call.Task, callStack: callStack}
+	}
+
+	callStack = callStack.Add(call)
 
 	t, err := e.CompiledTask(call)
 	if err != nil {
@@ -332,7 +317,7 @@ func (e *Executor) runTask(ctx context.Context, callStack []taskfile.Call, call 
 				continue
 			}
 
-			return &taskRunError{t.Task, err}
+			return &RunError{t.Task, err}
 		}
 	}
 	return nil
@@ -363,6 +348,7 @@ func (e *Executor) collectDeps(t *taskfile.Task) (map[int][]*taskfile.Dep, error
 	return collection, err
 }
 
+// recursivelyCollectDeps recursively collects deps of the given task. It groups them by level.
 func (e *Executor) recursivelyCollectDeps(
 	t *taskfile.Task,
 	level int,
@@ -400,7 +386,7 @@ func (e *Executor) recursivelyCollectDeps(
 	return nil
 }
 
-func (e *Executor) runDeps(ctx context.Context, callStack []taskfile.Call, t *taskfile.Task) error {
+func (e *Executor) runDeps(ctx context.Context, callStack taskfile.CallStack, t *taskfile.Task) error {
 	deps, err := e.collectDeps(t)
 	if err != nil {
 		return err
@@ -447,17 +433,20 @@ func (e *Executor) runDeps(ctx context.Context, callStack []taskfile.Call, t *ta
 	return nil
 }
 
-func (e *Executor) runDep(ctx context.Context, callStack []taskfile.Call, d *taskfile.Dep) error {
-	fmt.Println("")
-	fmt.Printf("runDep(%s)\n", d.Task)
-	defer fmt.Println("")
-	fmt.Printf("running dep %s, waiting for lock\n", d.Task)
-	if containsCall(callStack, d.ToCall()) {
-		return InfiniteCallLoopError{causeTask: d.Task}
+func (e *Executor) runDep(ctx context.Context, callStack taskfile.CallStack, d *taskfile.Dep) error {
+	// Even though in runTask we check if we are not ending up in an endless loop, we must do it here,
+	// too because it may prevent a deadlock.
+	// Example: a has dep b which runs a (directly, no dep).
+	// When a runs, the dependencies are run. Only one dependency is allowed to run at a time,
+	// so when dep b runs, a cannot finish until dep b finishes.
+	// B runs a however (directly), and a must run dep b, which is stuck because the first run of
+	// a is still waiting for it.
+	if callStack.Contains(d.ToCall()) {
+		return InfiniteCallLoopError{causeTask: d.Task, callStack: callStack}
 	}
+
 	e.depMutexMap[d.Task].Lock()
 	defer e.depMutexMap[d.Task].Unlock()
-	fmt.Printf("got lock")
 	return e.runTask(ctx, callStack, d.ToCall(), false)
 }
 
@@ -478,7 +467,7 @@ func (e *Executor) mkdir(t *taskfile.Task) error {
 	return nil
 }
 
-func (e *Executor) runCommand(ctx context.Context, callStack []taskfile.Call, t *taskfile.Task, i int) error {
+func (e *Executor) runCommand(ctx context.Context, callStack taskfile.CallStack, t *taskfile.Task, i int) error {
 	cmd := t.Cmds[i]
 
 	switch {

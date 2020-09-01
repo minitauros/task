@@ -514,8 +514,20 @@ func TestInit(t *testing.T) {
 	}
 }
 
-func TestCyclicDep(t *testing.T) {
-	const dir = "testdata/cyclic"
+func TestCyclicDirectDep(t *testing.T) {
+	const dir = "testdata/cyclic_direct"
+
+	e := task.Executor{
+		Dir:    dir,
+		Stdout: ioutil.Discard,
+		Stderr: ioutil.Discard,
+	}
+	assert.NoError(t, e.Setup())
+	assert.IsType(t, task.DirectDepCycleError{}, e.Run(context.Background(), taskfile.Call{Task: "a"}))
+}
+
+func TestCyclicIndirectDep(t *testing.T) {
+	const dir = "testdata/cyclic_indirect"
 
 	e := task.Executor{
 		Dir:    dir,
@@ -526,16 +538,20 @@ func TestCyclicDep(t *testing.T) {
 	assert.IsType(t, task.MaxDepLevelReachedError{}, e.Run(context.Background(), taskfile.Call{Task: "a"}))
 }
 
-func TestCyclicDirectDep(t *testing.T) {
-	const dir = "testdata/cyclic_direct"
+func TestCyclicViaDepAndDirectCall(t *testing.T) {
+	const dir = "testdata/cyclic_via_dep_and_direct_call"
 
 	e := task.Executor{
 		Dir:    dir,
 		Stdout: ioutil.Discard,
 		Stderr: ioutil.Discard,
 	}
+
 	assert.NoError(t, e.Setup())
-	assert.IsType(t, task.DirectDepCycleError{}, e.Run(context.Background(), taskfile.Call{Task: "task-1"}))
+
+	err := e.Run(context.Background(), taskfile.Call{Task: "a"})
+	assert.IsType(t, &task.RunError{}, err)
+	assert.IsType(t, task.InfiniteCallLoopError{}, err.(*task.RunError).ActualErr)
 }
 
 func TestDepsRunOnlyOnce(t *testing.T) {

@@ -3,6 +3,8 @@ package task
 import (
 	"errors"
 	"fmt"
+
+	"github.com/go-task/task/v3/taskfile"
 )
 
 var (
@@ -18,13 +20,16 @@ func (err *taskNotFoundError) Error() string {
 	return fmt.Sprintf(`task: Task "%s" not found`, err.taskName)
 }
 
-type taskRunError struct {
-	taskName string
-	err      error
+// RunError is used when a task run runs into an error.
+type RunError struct {
+	taskName  string
+
+	// Exported for assertion in tests.
+	ActualErr error
 }
 
-func (err *taskRunError) Error() string {
-	return fmt.Sprintf(`task: Failed to run task "%s": %v`, err.taskName, err.err)
+func (err *RunError) Error() string {
+	return fmt.Sprintf(`task: Failed to run task "%s": %v`, err.taskName, err.ActualErr)
 }
 
 // MaximumTaskCallExceededError is returned when a task is called too
@@ -50,10 +55,17 @@ func (e *MaximumTaskCallExceededError) Error() string {
 type InfiniteCallLoopError struct {
 	// Name of the task that is causing the infinite loop.
 	causeTask string
+
+	callStack taskfile.CallStack
 }
 
 func (e InfiniteCallLoopError) Error() string {
-	return fmt.Sprintf("task %s already ran; assuming infinite loop", e.causeTask)
+	return fmt.Sprintf(
+		"task %s runs %s, but %s was already run; assuming infinite loop",
+		e.causeTask,
+		e.callStack[len(e.callStack)-1].Task,
+		e.callStack[len(e.callStack)-1].Task,
+	)
 }
 
 // MaxDepLevelReachedError is used when while analyzing dependencies, we pass the maximum level of depth.
